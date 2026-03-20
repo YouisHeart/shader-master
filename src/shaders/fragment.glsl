@@ -212,7 +212,8 @@ void main() {
         uv *= 2.0;
     #endif
         
-    vec3 rd = normalize(vec3(uv, 4.0 / 3.0));
+
+    vec3 rd = normalize(vec3(uv,4.0 / 3.0));    
     
     vec2 i = intersect(ro, rd);
     float d = i.x;
