@@ -37,6 +37,11 @@ const initShaders = () => {
   uniforms = {
   iTime: { value: 0 },
   iResolution: { value: new THREE.Vector3(window.innerWidth, window.innerHeight, 1) },
+  iMouse: { value: new THREE.Vector4() },
+  iFrame: { value: 0 },
+  iTimeDelta: { value: 0 },
+  iFrameRate: { value: 60 },
+  iDate: { value: new THREE.Vector4() }
 };
 
   material = new THREE.ShaderMaterial({
@@ -71,6 +76,8 @@ let lastTime = performance.now()
 function animate() {
   requestAnimationFrame(animate);
   uniforms.iTime.value = performance.now() * 0.001;
+  uniforms.iTimeDelta.value = (performance.now() - lastTime) * 0.001;
+  uniforms.iFrame.value++;
   renderer.render(scene, camera);
 }
 

@@ -35,9 +35,9 @@ onBeforeUnmount(() => {
 // 初始化shader
 const initShaders = () => {
   uniforms = {
-  iTime: { value: 0 },
-  iResolution: { value: new THREE.Vector3(window.innerWidth, window.innerHeight, 1) },
-};
+    uTime: { value: 0 },
+    uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
+  }
 
   material = new THREE.ShaderMaterial({
     vertexShader,
@@ -67,11 +67,10 @@ const initThree = () => {
   container.value.appendChild(renderer.domElement)
 }
 
-let lastTime = performance.now()
 function animate() {
-  requestAnimationFrame(animate);
-  uniforms.iTime.value = performance.now() * 0.001;
-  renderer.render(scene, camera);
+  requestAnimationFrame(animate)
+  uniforms.uTime.value = performance.now() / 1000
+  renderer.render(scene, camera)
 }
 
 const onResize = () => {
