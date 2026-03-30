@@ -36,7 +36,8 @@ onBeforeUnmount(() => {
 const initShaders = () => {
   uniforms = {
   iTime: { value: 0 },
-  iResolution: { value: new THREE.Vector3(window.innerWidth, window.innerHeight, 1) }
+  iResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+  iMouse: { value: new THREE.Vector4(0, 0, 0, 0) }
 };
 
   material = new THREE.ShaderMaterial({
