@@ -1,7 +1,7 @@
 <template>
   <div class="cloud-scene-container" ref="containerRef">
     <div class="info-panel">
-      <div class="title">☁️ 体积云 · 纯白云效果 (无天空背景)</div>
+      <div class="title">☁️ 体积云 · 动态噪声白云</div>
       <div class="controls-hint">🖱️ 鼠标拖拽旋转视角 | 右键平移 | 滚轮缩放</div>
     </div>
   </div>
@@ -13,9 +13,9 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 
 // ============================================================
-// 纯白云效果 - 无天空背景，只输出云层颜色和透明度
-// 方便后续移植到 Cesium 中叠加使用
+// 白云效果 - 基于Shader的体积云渲染
 // 原始GLSL作者: yjsdszz (https://gitee.com/yjsdszz)
+// 适配为 Vue 3 组合式函数组件
 // ============================================================
 
 const containerRef = ref(null)
@@ -50,14 +50,11 @@ let resizeHandler = null
 const initScene = () => {
   if (!containerRef.value) return
 
-  // 渲染器 (启用透明度，以便叠加到其他背景)
-  renderer = new THREE.WebGLRenderer({ 
-    antialias: true, 
-    alpha: true  // 开启透明通道，不绘制背景
-  })
+  // 渲染器 (启用对数深度缓冲，适应大球体)
+  renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true })
   renderer.setPixelRatio(window.devicePixelRatio)
   renderer.setSize(window.innerWidth, window.innerHeight)
-  renderer.setClearColor(0x000000, 0) // 完全透明背景
+  renderer.setClearColor(0x030318, 1.0) // 深邃夜空底色
   containerRef.value.appendChild(renderer.domElement)
 
   // 相机
@@ -68,6 +65,9 @@ const initScene = () => {
   // 场景
   scene = new THREE.Scene()
   
+  // 微弱的雾效，让远处融合更自然
+  scene.fog = new THREE.FogExp2(0x030318, 0.00005)
+
   // 轨道控制 (用户交互)
   controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
@@ -76,10 +76,14 @@ const initScene = () => {
   controls.zoomSpeed = 1.2
   controls.panSpeed = 0.8
   controls.target.set(0, 1.2, 0)
+
+  // 环境辅助光 (微弱，不影响shader主体)
+  const ambientLight = new THREE.AmbientLight(0x404060, 0.25)
+  scene.add(ambientLight)
 }
 
 // ============================================================
-// 2. 创建白云材质 (ShaderMaterial) - 纯云层，无天空
+// 2. 创建白云材质 (ShaderMaterial)
 // ============================================================
 const createCloudMaterial = () => {
   // 定义 uniforms
@@ -89,7 +93,7 @@ const createCloudMaterial = () => {
     iMouse: { value: new THREE.Vector2(0, 0) }
   }
 
-  // 片段着色器 - 只输出云层，天空部分完全透明
+  // 片段着色器 (基于原始代码优化，白云体积云效果)
   const fragmentShader = `
     precision mediump float;
     
@@ -131,7 +135,7 @@ const createCloudMaterial = () => {
       return res;
     }
     
-    // 太阳光方向 (用于云层光照)
+    // 太阳光方向
     vec3 sundir = vec3(-1.0, 0.35, -0.45);
     
     // 射线步进 (Ray Marching) 累积云层颜色
@@ -164,7 +168,7 @@ const createCloudMaterial = () => {
       p.x *= iResolution.x / iResolution.y;
       vec2 mo = -1.0 + 2.0 * iMouse.xy / iResolution.xy;
       
-      // 动态相机: 基于鼠标位置旋转视角
+      // 动态相机: 基于鼠标位置旋转视角，增强沉浸感
       float angleHor = 2.75 - 3.0 * mo.x;
       float angleVer = 0.75 + (mo.y + 1.0) * 0.35;
       float clampedVer = clamp(angleVer, -0.3, 1.6);
@@ -177,12 +181,16 @@ const createCloudMaterial = () => {
       
       vec4 res = raymarch( ro, rd );
       
-      // 纯云层输出 - 不混合任何天空背景
-      // res.xyz 是云层颜色，res.w 是云层不透明度
-      // 如果云层密度很低，则完全透明，露出背景
-      vec4 finalColor = vec4(res.xyz, res.w);
+      // 天空背景 + 太阳辉光
+      float sun = clamp( dot(sundir, rd), 0.0, 1.0 );
+      vec3 col = vec3(0.55, 0.68, 0.78) - rd.y * 0.18 * vec3(1.0, 0.55, 1.0) + 0.12;
+      col += 0.22 * vec3(1.0, 0.65, 0.2) * pow( sun, 10.0 );
+      col *= 0.96;
+      // 混合云层
+      col = mix( col, res.xyz, res.w );
+      col += 0.12 * vec3(1.0, 0.45, 0.25) * pow( sun, 3.5 );
       
-      gl_FragColor = finalColor;
+      gl_FragColor = vec4( col, 1.0 );
     }
   `
 
@@ -198,7 +206,7 @@ const createCloudMaterial = () => {
     uniforms: uniforms,
     vertexShader: vertexShader,
     fragmentShader: fragmentShader,
-    transparent: true,      // 启用透明通道
+    transparent: true,
     side: THREE.BackSide,   // 内表面渲染，包裹相机
     depthWrite: false,
     depthTest: true
@@ -209,20 +217,19 @@ const createCloudMaterial = () => {
 // 3. 创建云层球体 (巨大的天空球)
 // ============================================================
 const createCloudSphere = () => {
-  // 使用球体几何，半径足够大以包裹相机
-  const geometry = new THREE.SphereGeometry(4900, 80, 80)
+  const geometry = new THREE.PlaneGeometry(100,100)
   const material = createCloudMaterial()
   const mesh = new THREE.Mesh(geometry, material)
   scene.add(mesh)
   return mesh
 }
 
-
 // ============================================================
-// 5. 鼠标交互监听
+// 5. 鼠标交互监听 (传递坐标给Shader，控制相机视角)
 // ============================================================
 const setupMouseTracking = () => {
   const onMouseMove = (event) => {
+    // 归一化坐标范围 -1 到 1
     const nx = (event.clientX / window.innerWidth) * 2.0 - 1.0
     const ny = 1.0 - (event.clientY / window.innerHeight) * 2.0
     targetMouseX = nx
@@ -248,7 +255,7 @@ const setupResizeHandler = () => {
 }
 
 // ============================================================
-// 7. 动画循环
+// 7. 动画循环 (驱动时间和鼠标平滑)
 // ============================================================
 const startAnimationLoop = () => {
   if (!renderer || !scene || !camera || !controls || !uniforms) return
@@ -261,21 +268,21 @@ const startAnimationLoop = () => {
     // 更新 Shader 时间
     uniforms.iGlobalTime.value = elapsedTime
     
-    // 平滑鼠标值
+    // 平滑鼠标值，使相机转动顺滑
     currentMouseX += (targetMouseX - currentMouseX) * 0.06
     currentMouseY += (targetMouseY - currentMouseY) * 0.06
     uniforms.iMouse.value.set(currentMouseX, currentMouseY)
     
-    // 星星缓慢自转
+    // 星星缓慢自转，增强沉浸感
     if (starsPoints) {
-      starsPoints.rotation.y = elapsedTime * 0.005
-      starsPoints.rotation.x = Math.sin(elapsedTime * 0.002) * 0.08
+      starsPoints.rotation.y = elapsedTime * 0.008
+      starsPoints.rotation.x = Math.sin(elapsedTime * 0.003) * 0.1
     }
     
     // 更新轨道控制
     controls.update()
     
-    // 渲染 (透明背景，只输出云层)
+    // 渲染
     renderer.render(scene, camera)
     
     animationId = requestAnimationFrame(animate)
@@ -285,7 +292,7 @@ const startAnimationLoop = () => {
 }
 
 // ============================================================
-// 8. 清理资源
+// 8. 清理资源 (组件卸载时)
 // ============================================================
 const cleanup = () => {
   if (animationId) {
@@ -309,6 +316,7 @@ const cleanup = () => {
     controls.dispose()
   }
   
+  // 清理场景资源
   if (scene) {
     scene.traverse((obj) => {
       if (obj.isMesh) {
@@ -323,19 +331,30 @@ const cleanup = () => {
 }
 
 // ============================================================
-// 生命周期
+// 生命周期: 组件挂载时初始化所有内容
 // ============================================================
 onMounted(() => {
+  // 初始化 Three.js 基础组件
   initScene()
+  
+  // 创建云层球体
   cloudMesh = createCloudSphere()
   
+  // 启动鼠标追踪
   const mouseMoveHandler = setupMouseTracking()
+  
+  // 窗口适配
   resizeHandler = setupResizeHandler()
+  
+  // 启动动画循环
   startAnimationLoop()
   
+  // 保存鼠标监听器以便清理 (可选，但cleanup已清理resize，鼠标监听需手动清理)
+  // 为完整清理，保存引用
   window._cloudMouseHandler = mouseMoveHandler
 })
 
+// 组件卸载时清理
 onBeforeUnmount(() => {
   if (window._cloudMouseHandler) {
     window.removeEventListener('mousemove', window._cloudMouseHandler)
@@ -353,7 +372,7 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: transparent;  /* 完全透明背景，露出下方的天空 */
+  background: #030318;
 }
 
 .info-panel {
@@ -363,16 +382,16 @@ onBeforeUnmount(() => {
   z-index: 10;
   pointer-events: none;
   font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.3);
 }
 
 .title {
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(8px);
   padding: 8px 18px;
   border-radius: 30px;
-  color: #f0ebe0;
-  font-size: 13px;
+  color: #f5f0e8;
+  font-size: 14px;
   font-weight: 500;
   letter-spacing: 1px;
   margin-bottom: 8px;
@@ -380,11 +399,11 @@ onBeforeUnmount(() => {
 }
 
 .controls-hint {
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(5px);
   padding: 5px 14px;
   border-radius: 20px;
-  color: #ccc;
+  color: #ddd;
   font-size: 11px;
   font-family: monospace;
 }
